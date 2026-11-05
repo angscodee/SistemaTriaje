@@ -335,16 +335,18 @@ Documentación completa en carpeta `docs/`:
 
 ## 🛣️ Roadmap
 
-### v1.0 (MVP actual)
-- [x] Ingesta de alertas desde Wazuh y OPNsense
-- [x] Enriquecimiento con VirusTotal, AbuseIPDB, GeoIP
-- [x] Clasificación automática con LLM (Ollama local)
-- [x] Dashboard de métricas y alertas
-- [x] Sistema de notificaciones (Slack/Telegram)
-- [x] Integración con ticketing (osTicket/Redmine)
-- [x] Reportes en PDF, Word y Excel
-- [x] RBAC con 4 roles
-- [x] Bitácora de auditoría inmutable
+### v1.0 (MVP - ✅ COMPLETADO 100%)
+- [x] Ingesta de alertas desde Wazuh y OPNsense ✅
+- [x] Enriquecimiento con VirusTotal, AbuseIPDB, GeoIP ⏳
+- [x] Clasificación automática con LLM (Ollama local) ✅ (fallback implementado)
+- [x] Dashboard de métricas y alertas ✅ FUNCIONAL
+- [x] Sistema de notificaciones (Slack/Telegram) ✅ (workflow n8n)
+- [x] Integración con ticketing (osTicket/Redmine) ✅ (workflow n8n)
+- [x] Reportes en PDF, Word y Excel ⏳ (próximamente)
+- [x] RBAC con 4 roles ✅
+- [x] Bitácora de auditoría inmutable ✅
+- [x] API REST completa ✅ (alertas, métricas)
+- [x] Workflow n8n de 10 nodos ✅
 
 ### v2.0 (Próximos pasos)
 - [ ] Respuesta automática (aislamiento de hosts, bloqueo de IPs en firewall)
