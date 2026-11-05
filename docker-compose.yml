@@ -1,0 +1,175 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: soctriaje-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-soctriaje}
+      POSTGRES_USER: ${DB_ADMIN_USER:-soc_admin}
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./db/triggers.sql:/docker-entrypoint-initdb.d/02-triggers.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_ADMIN_USER:-soc_admin} -d ${DB_NAME:-soctriaje}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: soctriaje-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: soctriaje-backend
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-soctriaje}
+      DB_USER: ${DB_USER:-soc_app}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-changeme_jwt_secret}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: ${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-15}
+      JWT_REFRESH_TOKEN_EXPIRE_DAYS: ${JWT_REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,http://localhost:80,http://localhost}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:-changeme_service_api_key}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      RATE_LIMIT_PER_MINUTE_GET: ${RATE_LIMIT_PER_MINUTE_GET:-100}
+      RATE_LIMIT_PER_MINUTE_POST: ${RATE_LIMIT_PER_MINUTE_POST:-20}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: soctriaje-ai
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${DB_NAME:-soctriaje}
+      DB_USER: ${DB_USER:-soc_app}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-30}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY:-}
+      ABUSEIPDB_API_KEY: ${ABUSEIPDB_API_KEY:-}
+      GEOIP_PROVIDER: ${GEOIP_PROVIDER:-ip-api}
+      SANITIZE_EXTERNAL_DATA: ${SANITIZE_EXTERNAL_DATA:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000/api/v1}
+    container_name: soctriaje-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: soctriaje-n8n
+    environment:
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678
+      GENERIC_TIMEZONE: America/Mexico_City
+    volumes:
+      - n8n_data:/home/node/.n8n
+    ports:
+      - "5678:5678"
+    networks:
+      - soc-network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    name: soctriaje-postgres-data
+  redis_data:
+    name: soctriaje-redis-data
+  n8n_data:
+    name: soctriaje-n8n-data
+
+networks:
+  soc-network:
+    name: soc-network
+    driver: bridge
