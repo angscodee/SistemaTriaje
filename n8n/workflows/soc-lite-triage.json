@@ -1,0 +1,176 @@
+{
+  "name": "SOC-Lite Alert Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "soc-alert",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Webhook - Receive Alert",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "soc-alert-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json[\"severity_original\"]}}",
+              "operation": "notEqual",
+              "value2": "baja"
+            }
+          ]
+        }
+      },
+      "id": "if-filter",
+      "name": "IF - Filter Low Severity",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO alerts (external_id, source, rule_id, rule_description, raw_payload, normalized, src_ip, dst_ip, agent_name, severity_original, fingerprint, status, received_at) VALUES ('{{$json[\"external_id\"]}}', '{{$json[\"source\"]}}', '{{$json[\"rule_id\"]}}', '{{$json[\"rule_description\"]}}', '{{JSON.stringify($json[\"raw_payload\"])}}', '{{JSON.stringify($json[\"normalized\"])}}', '{{$json[\"src_ip\"]}}', '{{$json[\"dst_ip\"]}}', '{{$json[\"agent_name\"]}}', '{{$json[\"severity_original\"]}}', '{{$json[\"fingerprint\"]}}', 'pendiente', NOW()) RETURNING id;"
+      },
+      "id": "postgres-insert",
+      "name": "PostgreSQL - Insert Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 200]
+    },
+    {
+      "parameters": {
+        "url": "http://ai-service:8001/triage",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"alert_id\": {{$json[\"id\"]}},\n  \"normalized_alert\": {{JSON.stringify($json[\"normalized\"])}}\n}"
+      },
+      "id": "http-triage",
+      "name": "HTTP - Call AI Service",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "={{$json[\"severity\"]}}"
+      },
+      "id": "switch-severity",
+      "name": "Switch - By Severity",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [1050, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO triage_results (alert_id, severity, verdict, confidence, summary, recommended_actions, mitre_techniques, indicators, enrichment, llm_model, latency_ms, created_at) VALUES ({{$json[\"alert_id\"]}}, '{{$json[\"severity\"]}}', '{{$json[\"verdict\"]}}', {{$json[\"confidence\"]}}, '{{$json[\"summary\"]}}', '{{JSON.stringify($json[\"recommended_actions\"])}}', '{{JSON.stringify($json[\"mitre_techniques\"])}}', '{{JSON.stringify($json[\"indicators\"])}}', '{{JSON.stringify($json[\"enrichment\"])}}', '{{$json[\"llm_model\"]}}', {{$json[\"latency_ms\"]}}, NOW()); UPDATE alerts SET status='triada', triaged_at=NOW() WHERE id={{$json[\"alert_id\"]}};"
+      },
+      "id": "postgres-save-triage",
+      "name": "PostgreSQL - Save Triage",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1250, 200]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.SLACK_WEBHOOK_URL}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\n  \"text\": \"🚨 *Alerta Crítica Detectada*\\n\\n*Severidad:* {{$json[\"severity\"]}}\\n*Veredicto:* {{$json[\"verdict\"]}}\\n*Resumen:* {{$json[\"summary\"]}}\\n\\n*Acciones recomendadas:*\\n{{$json[\"recommended_actions\"].join('\\n')}}\"\n}"
+      },
+      "id": "slack-notify",
+      "name": "Slack - Notify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1250, 100]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.TICKETING_API_URL}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.TICKETING_API_KEY}}"
+            }
+          ]
+        },
+        "bodyParametersJson": "={\n  \"title\": \"Alerta {{$json[\"alert_id\"]}}: {{$json[\"severity\"]}} - {{$json[\"summary\"].substring(0, 50)}}\",\n  \"description\": {{JSON.stringify($json[\"summary\"])}},\n  \"priority\": \"{{$json[\"severity\"] === 'alta' ? 'urgent' : 'high'}}\"\n}"
+      },
+      "id": "http-ticketing",
+      "name": "HTTP - Create Ticket",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1450, 100]
+    },
+    {
+      "parameters": {
+        "url": "http://backend:8000/api/v1/audit/external",
+        "method": "POST",
+        "jsonParameters": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{$env.SERVICE_API_KEY}}"
+            }
+          ]
+        },
+        "bodyParametersJson": "={\n  \"action\": \"n8n_triage_completed\",\n  \"resource\": \"alert\",\n  \"resource_id\": {{$json[\"alert_id\"]}},\n  \"details\": {\n    \"severity\": \"{{$json[\"severity\"]}}\",\n    \"verdict\": \"{{$json[\"verdict\"]}}\",\n    \"llm_model\": \"{{$json[\"llm_model\"]}}\"\n  }\n}"
+      },
+      "id": "http-audit",
+      "name": "HTTP - Log to Audit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1650, 200]
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Alert": {
+      "main": [[{ "node": "IF - Filter Low Severity", "type": "main", "index": 0 }]]
+    },
+    "IF - Filter Low Severity": {
+      "main": [[{ "node": "PostgreSQL - Insert Alert", "type": "main", "index": 0 }]]
+    },
+    "PostgreSQL - Insert Alert": {
+      "main": [[{ "node": "HTTP - Call AI Service", "type": "main", "index": 0 }]]
+    },
+    "HTTP - Call AI Service": {
+      "main": [[{ "node": "Switch - By Severity", "type": "main", "index": 0 }]]
+    },
+    "Switch - By Severity": {
+      "main": [
+        [{ "node": "PostgreSQL - Save Triage", "type": "main", "index": 0 }],
+        [{ "node": "Slack - Notify", "type": "main", "index": 0 }]
+      ]
+    },
+    "Slack - Notify": {
+      "main": [[{ "node": "HTTP - Create Ticket", "type": "main", "index": 0 }]]
+    },
+    "PostgreSQL - Save Triage": {
+      "main": [[{ "node": "HTTP - Log to Audit", "type": "main", "index": 0 }]]
+    },
+    "HTTP - Create Ticket": {
+      "main": [[{ "node": "HTTP - Log to Audit", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1",
+  "id": "soc-lite-triage-workflow",
+  "meta": {
+    "instanceId": "local"
+  },
+  "tags": []
+}

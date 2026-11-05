@@ -94,6 +94,12 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 app.include_router(health.router, tags=["Health"])
 app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
 
+# Import additional routers
+from app.routers import alerts, metrics
+
+app.include_router(alerts.router, prefix="/api/v1", tags=["Alerts"])
+app.include_router(metrics.router, prefix="/api/v1", tags=["Metrics"])
+
 
 # Root endpoint
 @app.get("/", tags=["Root"])
